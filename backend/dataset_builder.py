@@ -238,6 +238,7 @@ def build_dataset(
     split_ratios: Mapping[str, float] | None = None,
     dataset_root: str | Path | None = None,
     patient_loader: Callable[[str], Any] | None = None,
+    limit_patients: int | None = None,
 ) -> Path:
     """Create split CSVs and a manifest, processing one patient at a time.
 
@@ -255,6 +256,10 @@ def build_dataset(
     ratios = _validated_ratios(split_ratios)
     root = Path(settings.DATASET_ROOT) if dataset_root is None else Path(dataset_root)
     patient_ids = _enumerate_patients(root)
+    if limit_patients is not None:
+        if limit_patients < 3:
+            raise ValueError(f"limit_patients must be at least 3, got {limit_patients}")
+        patient_ids = patient_ids[:limit_patients]
     assignments = split_patients(
         patient_ids,
         seed=seed,
@@ -406,9 +411,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_dir", help="New directory for CSV splits and manifest")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument(
+        "--limit-patients",
+        type=int,
+        default=None,
+        help="Optional maximum number of patients to process (for tests/benchmarks)",
+    )
     args = parser.parse_args(argv)
     try:
-        output = build_dataset(args.output_dir, seed=args.seed)
+        output = build_dataset(
+            args.output_dir,
+            seed=args.seed,
+            limit_patients=args.limit_patients,
+        )
     except (DatasetBuildError, FileExistsError, FileNotFoundError, ValueError) as exc:
         print(f"Dataset build failed: {exc}", file=sys.stderr)
         return 1

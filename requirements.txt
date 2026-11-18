@@ -17,3 +17,6 @@ synapseclient
 
 # Quantum Machine Learning (Phase 3)
 pennylane
+
+# 2D whole-tumor segmentation baseline (CPU execution)
+torch
