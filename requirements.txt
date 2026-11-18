@@ -14,3 +14,6 @@ opencv-python
 # Synapse-based dataset download utilities
 requests
 synapseclient
+
+# Quantum Machine Learning (Phase 3)
+pennylane
