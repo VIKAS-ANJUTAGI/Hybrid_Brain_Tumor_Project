@@ -10,13 +10,17 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import torch
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
+from unittest.mock import patch
 
 from models.segmentation import (
     BCEDiceLoss, BraTSSegmentationDataset, ManifestSplitError, PatientVolumes,
     UNet2D, load_patient_volumes, predict_slice, predict_volume,
     prepare_axial_slice, preprocess_patient, segmentation_metrics,
 )
-from models.segmentation.training import TrainingConfig, build_datasets, load_checkpoint, reconstruct_model, train_segmentation
+from models.segmentation.training import (EMPTY_SLICE_FP_CONSTRAINT, PatientBatchSampler, TrainingConfig, _run_epoch,
+    _select_checkpoint, build_datasets, load_checkpoint, reconstruct_model, train_segmentation)
 
 
 MODALITIES = ("t1c", "t1n", "t2w", "t2f")
@@ -112,6 +116,185 @@ class SegmentationDatasetTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "shape"):
                 BraTSSegmentationDataset(bad_manifest, "train", dataset_root=root)
 
+    def test_cache_counters_reset_and_count_hits_misses_and_patient_switches(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for patient in ("train-a", "train-b", "validation"):
+                _write_patient(root, patient)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest(["train-a", "train-b"], ["validation"])), encoding="utf-8")
+            dataset = BraTSSegmentationDataset(manifest, "train", dataset_root=root, cache_size=1)
+            dataset[0]
+            dataset[1]
+            dataset[2]
+            self.assertEqual((dataset.cache_misses, dataset.cache_hits), (2, 1))
+            self.assertEqual(dataset.volume_load_count, 10)
+            self.assertEqual(dataset.patient_switches, 1)
+            self.assertGreaterEqual(dataset.data_loading_seconds, 0)
+            dataset.reset_counters()
+            self.assertEqual((dataset.cache_hits, dataset.cache_misses, dataset.volume_load_count, dataset.patient_switches), (0, 0, 0, 0))
+            self.assertEqual(dataset.data_loading_seconds, 0)
+
+
+class PatientSamplerTests(unittest.TestCase):
+    def test_patient_sampler_covers_each_slice_once_and_keeps_incomplete_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for patient in ("train-a", "train-b", "validation"):
+                _write_patient(root, patient)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest(["train-a", "train-b"], ["validation"])), encoding="utf-8")
+            dataset = BraTSSegmentationDataset(manifest, "train", dataset_root=root)
+            sampler = PatientBatchSampler(dataset, batch_size=3, seed=77)
+            batches = list(sampler)
+            flat = [index for batch in batches for index in batch]
+            self.assertEqual(sorted(flat), list(range(len(dataset))))
+            self.assertEqual(len(flat), len(set(flat)))
+            self.assertEqual(len(batches), len(sampler))
+            self.assertIn(2, [len(batch) for batch in batches])
+            for batch in batches:
+                self.assertEqual(len({dataset._index[index][0] for index in batch}), 1)
+
+    def test_patient_order_is_reproducible_and_epoch_specific(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            patients = ["train-a", "train-b", "train-c", "validation"]
+            for patient in patients:
+                _write_patient(root, patient)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest(patients[:3], [patients[3]])), encoding="utf-8")
+            dataset = BraTSSegmentationDataset(manifest, "train", dataset_root=root)
+            first, second = PatientBatchSampler(dataset, 2, 93), PatientBatchSampler(dataset, 2, 93)
+            first.set_epoch(4)
+            second.set_epoch(4)
+            epoch_four = list(first)
+            self.assertEqual(epoch_four, list(second))
+            first.set_epoch(5)
+            self.assertNotEqual(epoch_four, list(first))
+
+
+class _TinyBatchDataset(Dataset):
+    def __init__(self):
+        self.values = (1.0, 3.0, 9.0)
+    def __len__(self):
+        return len(self.values)
+    def __getitem__(self, index):
+        return torch.tensor([[[[self.values[index]]]]]), torch.zeros((1, 1, 1, 1))
+
+
+class _ScaleModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.scale = nn.Parameter(torch.tensor(1.0))
+    def forward(self, images):
+        return images * self.scale
+
+
+class _MeanLoss(nn.Module):
+    def forward(self, logits, targets):
+        return logits.mean()
+
+
+class BatchAccountingTests(unittest.TestCase):
+    def test_batch_sampler_loader_uses_actual_sizes_for_weighted_average(self) -> None:
+        dataset = _TinyBatchDataset()
+        loader = DataLoader(dataset, batch_sampler=[[0, 1], [2]])
+        self.assertIsNone(loader.batch_size)
+        model = _ScaleModel()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+        statuses = []
+        result = _run_epoch(model, loader, _MeanLoss(), optimizer=optimizer, threshold=0.5, status=lambda *args: statuses.append(args), epoch=1)
+        self.assertAlmostEqual(result["loss"], 13.0 / 3.0)
+        self.assertAlmostEqual(statuses[-1][3], 13.0 / 3.0)
+        self.assertEqual(statuses[-1][:2], (2, 2))
+
+
+class _PatientMetricDataset(Dataset):
+    def __init__(self):
+        # p1 contributes three tumor slices, p2 one tumor slice and p3 only empty slices.
+        self.patient_ids = ("p1", "p2", "p3")
+        self._index = [("p1", i) for i in range(3)] + [("p2", 0)] + [("p3", i) for i in range(2)]
+        self.targets = [1.0, 1.0, 1.0, 1.0, 0.0, 0.0]
+        self.predictions = [1.0, 1.0, 1.0, 0.0, 1.0, 0.0]
+    def __len__(self): return len(self._index)
+    def __getitem__(self, index):
+        return torch.tensor([[[self.predictions[index] * 100 - 50]]]), torch.tensor([[[self.targets[index]]]])
+
+
+class _ZeroLoss(nn.Module):
+    def forward(self, logits, targets): return logits.sum() * 0
+
+
+class PatientAwareSelectionTests(unittest.TestCase):
+    def test_patient_macro_dice_weights_patients_not_slices_and_reports_counts(self):
+        dataset = _PatientMetricDataset()
+        result = _run_epoch(_ScaleModel(), DataLoader(dataset, batch_size=2), _ZeroLoss(), optimizer=None, threshold=0.5)
+        # p1 mean=1, p2 mean=0; p3 has no tumor and is excluded: macro=(1+0)/2.
+        self.assertEqual(result["patient_tumor_dice"], {"p1": 1.0, "p2": 0.0, "p3": None})
+        self.assertEqual(result["patient_tumor_slice_counts"], {"p1": 3, "p2": 1, "p3": 0})
+        self.assertEqual(result["patient_empty_slice_counts"], {"p1": 0, "p2": 0, "p3": 2})
+        self.assertEqual(result["patients_without_tumor_slices"], ["p3"])
+        self.assertEqual(result["patient_macro_tumor_dice"], 0.5)
+        self.assertEqual(result["positive_slice_dice"], 0.75)
+
+    def test_empty_fp_rate_and_constraint_boundary(self):
+        dataset = _PatientMetricDataset()
+        result = _run_epoch(_ScaleModel(), DataLoader(dataset, batch_size=2), _ZeroLoss(), optimizer=None, threshold=0.5)
+        self.assertEqual(result["empty_slice_count"], 2)
+        self.assertEqual(result["empty_slice_false_positive_count"], 1)
+        self.assertEqual(result["empty_slice_false_positive_rate"], 0.5)
+        self.assertFalse(result["constraint_satisfied"])
+        self.assertEqual(EMPTY_SLICE_FP_CONSTRAINT.numerator, 85)
+        self.assertEqual(EMPTY_SLICE_FP_CONSTRAINT.denominator, 384)
+        self.assertLessEqual(85 / 384, float(EMPTY_SLICE_FP_CONSTRAINT))
+
+    @staticmethod
+    def _epoch(epoch, *, dice, fp, loss, eligible=None):
+        satisfied = fp <= float(EMPTY_SLICE_FP_CONSTRAINT) if eligible is None else eligible
+        return {"epoch": epoch, "validation_patient_macro_tumor_dice": dice,
+            "validation_empty_slice_false_positive_rate": fp, "validation_constraint_satisfied": satisfied,
+            "validation_loss": loss, "validation_dice": 0.6 + epoch / 100,
+            "validation_patient_tumor_dice": {"patient-a": dice}, "segmentation_threshold": 0.5}
+
+    def test_equal_patient_dice_uses_lower_validation_loss(self):
+        chosen, metadata = _select_checkpoint([self._epoch(1, dice=0.7, fp=0.1, loss=0.3), self._epoch(2, dice=0.7, fp=0.1, loss=0.2)])
+        self.assertEqual(chosen["epoch"], 2)
+        self.assertTrue(metadata["constraint_satisfied"])
+        self.assertFalse(metadata["fallback_used"])
+
+    def test_no_eligible_epoch_falls_back_to_lowest_fp_then_dice(self):
+        chosen, metadata = _select_checkpoint([self._epoch(1, dice=0.9, fp=0.30, loss=0.3), self._epoch(2, dice=0.6, fp=0.25, loss=0.2), self._epoch(3, dice=0.8, fp=0.25, loss=0.4)])
+        self.assertEqual(chosen["epoch"], 3)
+        self.assertTrue(metadata["fallback_used"])
+        self.assertFalse(metadata["constraint_satisfied"])
+
+    def test_checkpoint_selection_metadata_and_legacy_loading(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "checkpoint.pt"
+            model = UNet2D(base_width=1)
+            optimizer = torch.optim.Adam(model.parameters())
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+            record = self._epoch(4, dice=0.75, fp=0.1, loss=0.2)
+            record.update({"validation_patient_tumor_slice_counts": {"patient-a": 3},
+                           "validation_empty_slice_false_positive_count": 2,
+                           "validation_iou": 0.6, "validation_precision": 0.8,
+                           "validation_recall": 0.7})
+            _, metadata = _select_checkpoint([record])
+            # Exercise serialization by writing the actual metadata structure alongside a legacy-shaped payload.
+            torch.save({"model_state_dict": model.state_dict(), "selection_metadata": metadata,
+                        "history": [record], "epoch": 4, "metric_threshold": 0.5}, path)
+            loaded = load_checkpoint(path)
+            self.assertEqual(loaded["selection_metadata"]["epoch"], 4)
+            self.assertEqual(loaded["selection_metadata"]["patient_level_dice_values"], {"patient-a": 0.75})
+            legacy = Path(temporary) / "legacy.pt"
+            torch.save({"model_state_dict": model.state_dict(), "epoch": 1}, legacy)
+            self.assertEqual(load_checkpoint(legacy)["epoch"], 1)
+
+    def test_existing_baseline_experiment_is_preserved(self):
+        baseline = Path(__file__).resolve().parents[1] / "results" / "segmentation_runs" / "unet_baseline_20261120T173712Z"
+        self.assertTrue(baseline.is_dir())
+        self.assertTrue((baseline / "best_checkpoint.pt").is_file())
+
 
 class SegmentationInferenceTests(unittest.TestCase):
     def test_training_and_inference_preprocessing_match(self) -> None:
@@ -167,10 +350,47 @@ class SegmentationCheckpointTests(unittest.TestCase):
             checkpoint = load_checkpoint(best)
             self.assertEqual(checkpoint["epoch"], 1)
             self.assertEqual(reconstruct_model(checkpoint).in_channels, 4)
-            self.assertEqual(len(json.loads(Path(first["history_path"]).read_text(encoding="utf-8"))), 1)
+            history = json.loads(Path(first["history_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(len(history), 1)
+            for key in ("validation_dice", "validation_patient_macro_tumor_dice", "validation_patient_tumor_dice",
+                        "validation_empty_slice_false_positive_count", "validation_empty_slice_false_positive_rate",
+                        "validation_constraint_satisfied", "validation_loss", "validation_iou",
+                        "validation_precision", "validation_recall"):
+                self.assertIn(key, history[0])
+            for key in ("selection_criterion", "patient_macro_tumor_dice", "empty_slice_false_positive_rate",
+                        "constraint_value", "constraint_satisfied", "all_slice_dice", "validation_loss",
+                        "epoch", "patient_level_dice_values", "segmentation_threshold"):
+                self.assertIn(key, checkpoint["selection_metadata"])
+            last_metadata = load_checkpoint(first["last_checkpoint_path"])["selection_metadata"]
+            self.assertEqual(last_metadata, checkpoint["selection_metadata"])
+            status_path = root / "training_status.json"
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status["status"], "COMPLETED")
+            self.assertTrue(status["run_id"])
+            self.assertEqual(status["pid"], status["process_id"])
+            self.assertTrue(status["last_successful_checkpoint"])
+            self.assertIn("last_updated_time", status)
+            self.assertFalse(status_path.with_suffix(".json.tmp").exists())
             resumed = train_segmentation(manifest, best, dataset_root=root, config=TrainingConfig(epochs=2, batch_size=2, patience=2), resume_checkpoint=first["last_checkpoint_path"])
             self.assertEqual(resumed["epochs_completed"], 2)
             self.assertEqual(load_checkpoint(resumed["last_checkpoint_path"])["epoch"], 2)
+
+    def test_training_exception_persists_failed_status_and_reraises(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write_patient(root, "train")
+            _write_patient(root, "validation")
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest(["train"], ["validation"])), encoding="utf-8")
+            with patch("models.segmentation.training._run_epoch", side_effect=RuntimeError("synthetic failure")):
+                with self.assertRaisesRegex(RuntimeError, "synthetic failure"):
+                    train_segmentation(manifest, root / "best.pt", dataset_root=root, config=TrainingConfig(epochs=1, batch_size=2))
+            status_path = root / "training_status.json"
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status["status"], "FAILED")
+            self.assertEqual(status["error_type"], "RuntimeError")
+            self.assertEqual(status["error_message"], "synthetic failure")
+            self.assertFalse(status_path.with_suffix(".json.tmp").exists())
 
 
 class SegmentationModelTests(unittest.TestCase):

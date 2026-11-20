@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -146,6 +147,12 @@ class BraTSSegmentationDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         self.manifest_path = manifest_file
         self.cache_size = cache_size
         self._cache: OrderedDict[str, tuple[np.ndarray, np.ndarray]] = OrderedDict()
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.volume_load_count = 0
+        self.data_loading_seconds = 0.0
+        self.patient_switches = 0
+        self._last_patient_id: str | None = None
         self._records: dict[str, _PatientRecord] = {}
         self._index: list[tuple[str, int]] = []
         suffixes = (*settings.MRI_MODALITIES, settings.SEGMENTATION_MASK_SUFFIX)
@@ -163,15 +170,23 @@ class BraTSSegmentationDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
     def __len__(self) -> int:
         return len(self._index)
 
+    def reset_counters(self) -> None:
+        self.cache_hits = self.cache_misses = self.volume_load_count = self.patient_switches = 0
+        self.data_loading_seconds = 0.0
+        self._last_patient_id = None
+
     @property
     def patient_ids(self) -> tuple[str, ...]:
         return tuple(self._records)
 
     def _load_patient(self, patient_id: str) -> tuple[np.ndarray, np.ndarray]:
         if patient_id in self._cache:
+            self.cache_hits += 1
             self._cache.move_to_end(patient_id)
             return self._cache[patient_id]
+        self.cache_misses += 1
         record = self._records[patient_id]
+        self.volume_load_count += len(settings.MRI_MODALITIES) + 1
         modalities = [np.asanyarray(nib.load(str(record.paths[name])).dataobj) for name in settings.MRI_MODALITIES]
         segmentation = np.asanyarray(nib.load(str(record.paths[settings.SEGMENTATION_MASK_SUFFIX])).dataobj)
         if not np.isfinite(segmentation).all():
@@ -192,10 +207,16 @@ class BraTSSegmentationDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         return normalized, mask
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        started = time.perf_counter()
         patient_id, slice_index = self._index[index]
+        if self._last_patient_id is not None and self._last_patient_id != patient_id:
+            self.patient_switches += 1
+        self._last_patient_id = patient_id
         images, mask = self._load_patient(patient_id)
         # BraTS arrays are (x, y, z); slice the native axial z axis.
-        return (
+        result = (
             torch.from_numpy(np.ascontiguousarray(images[:, :, :, slice_index])),
             torch.from_numpy(np.ascontiguousarray(mask[:, :, :, slice_index])),
         )
+        self.data_loading_seconds += time.perf_counter() - started
+        return result

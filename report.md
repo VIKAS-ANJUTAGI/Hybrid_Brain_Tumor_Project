@@ -1,5 +1,7 @@
 # Hybrid Quantum-Classical Brain Tumor Detection: Comprehensive Technical Project Report
 
+> **Legacy draft notice (2026-11):** This report predates implementation of the quantum experiments, U-Net segmentation, hybrid inference, and dashboard. Its implementation-status table, future roadmap, and performance/clinical descriptions are not authoritative for the current repository. Use `README.md` and the current documents in `docs/` for the verified implementation, saved final results, and execution instructions. This legacy report is retained for provenance and has not been reconciled section by section.
+
 ---
 
 ## 1. Executive Summary & Project Overview
