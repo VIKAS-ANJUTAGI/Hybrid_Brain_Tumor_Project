@@ -1,17 +1,20 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#f4f7f8"><title>NeuroLab | Research Dashboard</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f5f7f8">
+  <title>NeuroLab | Research Dashboard</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
-  <aside class="sidebar">
-    <a class="brand" href="/"><span class="brand-mark">N</span><span><b>NeuroLab</b><small>IMAGING RESEARCH</small></span></a>
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="#workspace" aria-label="NeuroLab home"><span class="brand-mark">N</span><span><b>NeuroLab</b><small>IMAGING RESEARCH</small></span></a>
     <div class="side-label">WORKSPACE</div>
-    <a class="nav active" href="#workspace"><span>▦</span> Patient workspace</a>
-    <a class="nav" href="#comparison"><span>◫</span> Model comparison</a>
-    <a class="nav" href="#metrics"><span>◩</span> Segmentation metrics</a>
+    <a class="nav active" href="#workspace"><span>⌂</span> Patient workspace</a>
+    <a class="nav" href="#comparison"><span>▤</span> Model comparison</a>
+    <a class="nav" href="#metrics"><span>◉</span> Segmentation metrics</a>
     <div class="side-divider"></div>
     <div class="side-label">STUDY</div>
     <div class="study-card"><span class="dot"></span><div><b>BraTS-GLI</b><small>Validation cohort</small></div></div>
@@ -20,36 +23,42 @@
   </aside>
 
   <main id="workspace" class="main">
-    <header class="topbar"><div class="crumb">Research workspace <span>/</span> Patient review</div><div class="top-right"><span class="prototype"><i></i> EXPERIMENTAL RESEARCH PROTOTYPE</span><span class="avatar">NR</span></div></header>
+    <header class="topbar"><button class="menu-toggle" id="menu-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button><div class="crumb">Research workspace <span>/</span> Patient review</div><div class="top-right"><span class="prototype"><i></i> EXPERIMENTAL RESEARCH PROTOTYPE</span><span class="avatar">NR</span></div></header>
     <section class="page-head"><div><div class="eyebrow">BRAIN MRI ANALYSIS</div><h1>Patient review</h1><p>Slice-wise tumor presence and conditional segmentation</p></div><div class="split-pill"><i></i> VALIDATION ONLY</div></section>
+
     <div class="layout">
-      <section class="card viewer-card">
-        <div class="card-head"><div><div class="eyebrow">IMAGING VIEWER</div><h2>Axial MRI</h2></div><div class="view-controls"><label class="compact-label" for="modality">MODALITY</label><select id="modality"><option value="t1c">T1C</option><option value="t1n">T1N</option><option value="t2w">T2W</option><option value="t2f">T2F</option></select></div></div>
-        <div class="image-stage"><div id="image-loading" class="image-loading">Select a permitted patient to load MRI</div><img id="mri-image" alt="Original axial MRI slice" hidden><span class="image-badge">ORIGINAL MRI</span><span id="image-slice-tag" class="slice-tag">—</span></div>
-        <div class="slice-controls"><button id="prev" class="icon-button" aria-label="Previous slice">‹</button><div class="slice-slider"><div class="slice-line"><span>SLICE INDEX</span><b id="slice-count">— / —</b></div><input id="slice" type="range" min="0" max="0" value="0" disabled></div><button id="next" class="icon-button" aria-label="Next slice">›</button></div>
+      <section class="card viewer-card" aria-labelledby="viewer-title">
+        <div class="card-head"><div><div class="eyebrow">IMAGING VIEWER</div><h2 id="viewer-title">Axial MRI</h2></div><div class="view-controls"><label class="compact-label" for="modality">MODALITY</label><select id="modality"><option value="t1c">T1C</option><option value="t1n">T1N</option><option value="t2w">T2W</option><option value="t2f">T2F</option></select></div></div>
+        <div class="image-stage" id="image-stage"><div id="image-loading" class="image-loading">Select a permitted patient to load MRI</div><img id="mri-image" alt="Original axial MRI slice" hidden><span class="image-badge">ORIGINAL MRI</span><span id="image-slice-tag" class="slice-tag">SLICE —</span></div>
+        <div class="viewer-toolbar" aria-label="MRI display controls"><div class="tool-group"><button id="zoom-out" class="tool-button" aria-label="Zoom out">−</button><button id="zoom-in" class="tool-button" aria-label="Zoom in">+</button><button id="fit" class="tool-button">Fit to screen</button><button id="reset-zoom" class="tool-button">Reset zoom</button></div><div class="display-adjust"><label for="brightness">Brightness</label><input id="brightness" type="range" min="50" max="160" value="100" aria-label="Viewer brightness"><label for="contrast">Contrast</label><input id="contrast" type="range" min="50" max="180" value="100" aria-label="Viewer contrast"><button id="reset-display" class="text-button">Reset</button></div></div>
+        <div class="slice-controls"><button id="prev" class="icon-button" aria-label="Previous slice">‹</button><div class="slice-slider"><div class="slice-line"><span>SLICE</span><b id="slice-count">— / —</b></div><input id="slice" type="range" min="0" max="0" value="0" disabled aria-label="MRI slice"></div><button id="next" class="icon-button" aria-label="Next slice">›</button></div>
       </section>
-      <section class="card selection-card">
-        <div class="eyebrow">ANALYSIS SETUP</div><h2>Study selection</h2>
+
+      <section class="card selection-card" aria-labelledby="selection-title">
+        <div class="eyebrow">ANALYSIS SETUP</div><h2 id="selection-title">Study selection</h2>
         <label for="patient">PATIENT ID</label><select id="patient" disabled><option>Loading validation cohort…</option></select>
         <div class="patient-meta"><span class="meta-chip"><i></i> Validation split</span><span id="modality-status">MRI not loaded</span></div>
+        <div class="study-summary"><span>MODALITIES AVAILABLE</span><b id="modality-list">T1C · T1N · T2W · T2F</b></div>
         <div class="field-separator"></div>
         <label for="model">DETECTION MODEL</label><select id="model"><option value="logistic_regression">Logistic Regression</option><option value="random_forest">Random Forest</option><option value="vqc_2">VQC-2</option><option value="vqc_4">VQC-4</option><option value="vqc_8">VQC-8</option><option disabled>VQC-16 · unavailable</option></select>
+        <div class="vqc-config"><span>QUANTUM CONFIGURATION</span><b id="vqc-config">Classical baseline</b></div>
         <div class="model-note">Saved model and paired preprocessing artifact are loaded on demand.</div>
         <button id="analyze" class="primary-button" disabled><span>▶</span> Run slice analysis</button>
-        <div id="status" class="status-line">Loading available validation patients…</div>
+        <div id="status" class="status-line" role="status" aria-live="polite">Loading available validation patients…</div>
       </section>
     </div>
 
     <section class="card detection-card">
       <div class="section-head"><div><div class="eyebrow">SLICE CLASSIFICATION</div><h2>Detection results</h2></div><span id="prediction-status" class="state-pill muted">Awaiting analysis</span></div>
-      <div class="detection-layout"><div class="stats"><div class="stat primary-stat"><span>CURRENT SLICE PROBABILITY</span><strong id="probability">—</strong><small id="prediction-label">Select a patient and run analysis</small></div><div class="stat"><span>POSITIVE SLICES</span><strong id="positive-count">—</strong><small>Above classification threshold</small></div><div class="stat"><span>NEGATIVE SLICES</span><strong id="negative-count">—</strong><small>Below classification threshold</small></div><div class="model-selected"><span>SELECTED MODEL</span><b id="selected-model">—</b></div></div><div class="chart-wrap"><div class="chart-title"><b>Slice-wise probability</b><span><i class="legend-blue"></i> Tumor probability <i class="legend-dash"></i> Threshold</span></div><canvas id="chart" aria-label="Tumor probability by slice"></canvas><div class="axis-labels"><span>SLICE INDEX</span><span>CLASSIFICATION THRESHOLD <b id="threshold-value">0.50</b></span></div></div></div>
+      <div class="detection-layout"><div class="stats"><div class="stat primary-stat"><span>CURRENT SLICE PROBABILITY</span><strong id="probability">—</strong><small id="prediction-label">Select a patient and run analysis</small></div><div class="stat"><span>POSITIVE SLICES</span><strong id="positive-count">—</strong><small>At or above threshold</small></div><div class="stat"><span>NEGATIVE SLICES</span><strong id="negative-count">—</strong><small>Below threshold</small></div><div class="stat threshold-stat"><span>CLASSIFICATION THRESHOLD</span><strong id="threshold-card">—</strong><small>Pipeline decision threshold</small></div><div class="model-selected"><span>SELECTED MODEL</span><b id="selected-model">—</b></div></div><div class="chart-wrap"><div class="chart-title"><b>Slice-wise probability</b><span><i class="legend-blue"></i> Tumor probability <i class="legend-dash"></i> Threshold</span></div><canvas id="chart" aria-label="Tumor probability by slice"></canvas><div class="axis-labels"><span>SLICE INDEX · ONE-BASED</span><span>THRESHOLD <b id="threshold-value">—</b></span></div></div></div>
     </section>
 
-    <section class="card segmentation-card"><div class="section-head"><div><div class="eyebrow">CONDITIONAL U-NET INFERENCE</div><h2>Segmentation review</h2></div><span id="seg-status" class="state-pill muted">Awaiting analysis</span></div><div id="seg-skipped" class="skip-message">Run detection to determine whether conditional segmentation is required.</div><div id="seg-content" class="seg-content" hidden><div class="seg-info"><div><span>SEGMENTATION PROBABILITY</span><b id="seg-probability">—</b></div><div><span>SLICE SELECTION</span><b id="neighbor-state">—</b></div><div><span>MASK STATUS</span><b id="mask-state">—</b></div></div><div class="seg-images"><figure><div class="seg-image"><img id="overlay-image" alt="MRI and predicted tumor overlay"></div></div><figcaption><b>MRI overlay</b><span>Predicted mask</span></figcaption></figure><figure><div class="seg-image"><img id="prediction-image" alt="Independently predicted U-Net mask"></div></div><figcaption><b>Predicted mask</b><span>U-Net · threshold 0.50</span></figcaption></figure><figure><div class="seg-image"><img id="ground-image" alt="Validation ground-truth mask overlay"></div></div><figcaption><b>Ground truth</b><span>Validation evaluation only</span></figcaption></figure></div></div></section>
+    <section class="card segmentation-card"><div class="section-head"><div><div class="eyebrow">CONDITIONAL U-NET INFERENCE</div><h2>Segmentation review</h2></div><span id="seg-status" class="state-pill muted">Awaiting analysis</span></div><div id="seg-skipped" class="skip-message">Run detection to determine whether conditional segmentation is required.</div><div id="seg-content" class="seg-content" hidden><div class="seg-info"><div><span>SLICE</span><b id="seg-slice">—</b></div><div><span>DETECTION STATUS</span><b id="seg-detection">—</b></div><div><span>SEGMENTATION STATUS</span><b id="seg-state">—</b></div><div><span>PROBABILITY THRESHOLD</span><b id="seg-threshold">—</b></div><div><span>MASK STATUS</span><b id="mask-state">—</b></div></div><div class="seg-images"><figure><div class="seg-image"><img id="seg-original-image" alt="Original T1C MRI slice"></div><figcaption><b>Original MRI</b><span>T1C reference</span></figcaption></figure><figure><div class="seg-image"><img id="ground-image" alt="Ground-truth tumor mask"></div><figcaption><b>Ground-truth mask</b><span>Validation annotation</span></figcaption></figure><figure><div class="seg-image"><img id="prediction-image" alt="Predicted U-Net tumor mask"></div><figcaption><b>Predicted mask</b><span>U-Net binary output</span></figcaption></figure><figure><div class="seg-image"><img id="overlay-image" alt="Transparent MRI segmentation overlay"></div><figcaption><b>MRI segmentation overlay</b><span>Predicted mask over T1C</span></figcaption></figure></div><div id="empty-mask-note" class="empty-mask-note" hidden>Empty predicted mask for this selected slice.</div></div></section>
 
-    <section id="comparison" class="card comparison-card"><div class="section-head"><div><div class="eyebrow">EXISTING VALIDATION RESULTS</div><h2>Detection model comparison</h2></div><span class="table-badge">VALIDATION</span></div><div class="table-scroll"><table><thead><tr><th>MODEL</th><th>ACCURACY</th><th>PRECISION</th><th>RECALL</th><th>F1-SCORE</th><th>ROC-AUC</th><th>TRAIN SLICES</th></tr></thead><tbody id="comparison-body"><tr><td colspan="7">Loading recorded results…</td></tr></tbody></table></div><div id="comparison-notes" class="table-note">Metrics are loaded from saved experiment reports.</div></section>
-    <section id="metrics" class="card metrics-card"><div class="section-head"><div><div class="eyebrow">U-NET VALIDATION</div><h2>Segmentation metrics</h2></div><span class="table-badge">VALIDATION · <b id="metric-slices">—</b> SLICES</span></div><div class="metric-grid"><div class="metric-item"><span>DICE</span><b id="dice">—</b></div><div class="metric-item"><span>IOU</span><b id="iou">—</b></div><div class="metric-item"><span>PIXEL PRECISION</span><b id="pixel-precision">—</b></div><div class="metric-item"><span>PIXEL RECALL</span><b id="pixel-recall">—</b></div></div><div class="metrics-foot">Per-slice macro average across the validation cohort. Training and final test metrics are not available.</div></section>
+    <section id="comparison" class="card comparison-card"><div class="section-head"><div><div class="eyebrow">EXISTING VALIDATION RESULTS</div><h2>Detection model comparison</h2></div><span class="table-badge">VALIDATION</span></div><div class="comparison-visual"><div class="comparison-chart-head"><b>Validation metric profile</b><span>Score · higher is better</span></div><div id="comparison-chart" class="comparison-chart" role="img" aria-label="Model comparison chart"></div></div><div class="table-scroll"><table><thead><tr><th>MODEL</th><th>ACCURACY</th><th>PRECISION</th><th>RECALL</th><th>F1-SCORE</th><th>ROC-AUC</th><th>TRAIN SLICES</th></tr></thead><tbody id="comparison-body"><tr><td colspan="7">Loading recorded results…</td></tr></tbody></table></div><div id="comparison-notes" class="table-note">Metrics are loaded from saved experiment reports.</div></section>
+    <section id="metrics" class="card metrics-card"><div class="section-head"><div><div class="eyebrow">U-NET VALIDATION</div><h2>Segmentation metrics</h2></div><span class="table-badge">VALIDATION · <b id="metric-slices">—</b> SLICES</span></div><div class="metric-grid"><div class="metric-item"><span>ALL-SLICE DICE</span><b id="dice">—</b></div><div class="metric-item"><span>TUMOR-SLICE DICE</span><b id="tumor-dice">—</b></div><div class="metric-item"><span>GLOBAL DICE</span><b id="global-dice" title="Not present in the saved validation report">—</b></div><div class="metric-item"><span>IOU</span><b id="iou">—</b></div><div class="metric-item"><span>PIXEL PRECISION</span><b id="pixel-precision">—</b></div><div class="metric-item"><span>PIXEL RECALL</span><b id="pixel-recall">—</b></div></div><div class="metrics-foot">Per-slice macro average across the validation cohort. Tumor-slice Dice uses tumor-containing slices only. Global Dice is unavailable in the saved report. Training and final test metrics are not available.</div></section>
     <footer>NeuroLab Research Dashboard <span>Experimental research prototype · Not a clinical diagnostic device</span></footer>
   </main>
   <script src="/static/dashboard.js"></script>
-</body></html>
+</body>
+</html>

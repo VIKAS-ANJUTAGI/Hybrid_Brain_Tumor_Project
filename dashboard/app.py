@@ -105,7 +105,15 @@ def segmentation_metrics() -> dict:
         "scope": "validation",
         "aggregation": data.get("metric_aggregation"),
         "slices": data.get("validation_slice_count"),
-        "metrics": {"dice": values.get("dice"), "iou": values.get("iou"), "pixel_precision": values.get("precision"), "pixel_recall": values.get("recall")},
+        "metrics": {
+            "dice": values.get("dice"),
+            "tumor_positive_slice_dice": data.get("tumor_positive_slice_dice"),
+            # The saved report does not contain a global pixel-wise Dice value.
+            "global_dice": data.get("global_dice"),
+            "iou": values.get("iou"),
+            "pixel_precision": values.get("precision"),
+            "pixel_recall": values.get("recall"),
+        },
         "training": None,
         "final_test": None,
     }
@@ -211,6 +219,8 @@ class DashboardService:
             return png_data(patient.volumes["t1c"][:, :, index], segment.binary_mask)
         if kind == "ground_truth":
             return png_data(patient.volumes["t1c"][:, :, index], patient.volumes["seg"][:, :, index] > 0)
+        if kind == "ground_truth_mask":
+            return png_data((patient.volumes["seg"][:, :, index] > 0).astype(np.uint8))
         raise ValueError("Unknown segmentation image type")
 
 
